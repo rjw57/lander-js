@@ -35,12 +35,21 @@
   let playerX = 0;
   let playerY = 0;
   let playerZ = 0;
+  let playerTransform = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
 
   let cameraX = 0;
   let cameraY = 0;
   let cameraZ = 0;
 
   let previousTimestamp = -1;
+
+  const binnedTriangles = new Array(TILES_Z);
+
+  const clearBinnedTriangles = () => {
+    for(let i=0; i<TILES_Z; i++) {
+      binnedTriangles[i] = [];
+    }
+  }
 
   const placePlayerOnLaunchpad = () => {
     playerX = LAUNCHPAD_SIZE / 2;
@@ -96,11 +105,22 @@
     playerZ -= 1 * deltaT * 1e-3 * TILE_SIZE;
     playerX += 0.3 * deltaT * 1e-3 * TILE_SIZE;
     playerY =
-      getLandscapeAltitude(playerX, playerZ) - UNDERCARRIAGE_Y - 5 * TILE_SIZE;
+      getLandscapeAltitude(playerX, playerZ) - UNDERCARRIAGE_Y - 2 * TILE_SIZE;
     previousTimestamp = timestamp;
+    playerTransform = matMatMul(
+      newRotYMatrix(timestamp * 2e-3),
+      newRotXMatrix(timestamp * 3e-3),
+    );
 
     // Request callback on next frame.
-    // window.requestAnimationFrame(onAnimationFrame);
+    window.requestAnimationFrame(onAnimationFrame);
+  };
+
+  const drawBinnedTriangle = (z, pA, pB, pC, color) => {
+    const tileOriginZ = Math.floor(cameraZ / TILE_SIZE) * TILE_SIZE + LANDSCAPE_Z;
+    const rowIdx = Math.max(0, Math.min(TILES_Z-1,
+        Math.floor((tileOriginZ - z) / TILE_SIZE)));
+    binnedTriangles[rowIdx].push([pA, pB, pC, color]);
   };
 
   const drawTriangle = (ctx, pA, pB, pC, colour) => {
@@ -124,6 +144,25 @@
   const drawLandscape = (ctx) => {
     const rows = [new Array(TILES_X), new Array(TILES_X)];
 
+    clearBinnedTriangles();
+
+    drawObject(
+      objectBlueprints.player,
+      playerX,
+      playerY + LANDSCAPE_Y,
+      playerZ + LANDSCAPE_Z,
+      playerTransform,
+    );
+
+    /*
+    drawObject(
+      objectBlueprints.smallLeafyTree,
+      0,
+      LAUNCHPAD_ALTITUDE + LANDSCAPE_Y,
+      LANDSCAPE_Z,
+    );
+    */
+
     const tileOriginX =
       Math.floor(cameraX / TILE_SIZE) * TILE_SIZE - LANDSCAPE_X;
     const tileOriginZ = Math.floor(cameraZ / TILE_SIZE) * TILE_SIZE;
@@ -143,24 +182,25 @@
         );
 
         // Skip first row and column when drawing quads
-        if (rowIdx == 0 || colIdx == 0) {
-          previousAltitude = y;
-          continue;
+        if (rowIdx != 0 && colIdx != 0) {
+          // Co-ords of quad to draw.
+          const pA = rows[0][colIdx - 1],
+            pB = rows[0][colIdx];
+          const pC = rows[1][colIdx],
+            pD = rows[1][colIdx - 1];
+
+          const landscapeTileColour = getLandscapeTileColour(
+            previousAltitude,
+            y,
+            rowIdx,
+          );
+
+          drawQuad(ctx, pA, pB, pC, pD, landscapeTileColour);
         }
 
-        // Co-ords of quad to draw.
-        const pA = rows[0][colIdx - 1],
-          pB = rows[0][colIdx];
-        const pC = rows[1][colIdx],
-          pD = rows[1][colIdx - 1];
-
-        const landscapeTileColour = getLandscapeTileColour(
-          previousAltitude,
-          y,
-          rowIdx,
-        );
-
-        drawQuad(ctx, pA, pB, pC, pD, landscapeTileColour);
+        binnedTriangles[rowIdx].forEach(([pA, pB, pC, color]) => {
+          drawTriangle(ctx, pA, pB, pC, color);
+        });
 
         previousAltitude = y;
       }
@@ -170,30 +210,14 @@
       rows[0] = rows[1];
       rows[1] = tmpRow;
     }
-
-    drawObject(
-      ctx,
-      objectBlueprints.player,
-      playerX,
-      playerY + LANDSCAPE_Y,
-      playerZ + LANDSCAPE_Z,
-    );
-
-    drawObject(
-      ctx,
-      objectBlueprints.smallLeafyTree,
-      0,
-      LAUNCHPAD_ALTITUDE + LANDSCAPE_Y,
-      LANDSCAPE_Z,
-    );
   };
 
   const drawObject = (
-    ctx,
     { faces, vertices, flags: { hasShadow, rotates } },
     cx,
     cy,
     cz,
+    transform,
   ) => {
     const transformedVertices = vertices.map(([x, y, z]) => {
       if (x > 0x80000000) {
@@ -205,6 +229,14 @@
       if (z > 0x80000000) {
         z -= 0x100000000;
       }
+
+      if(transform) {
+        const p = matVecMul(transform, [x, y, z]);
+        x = p[0];
+        y = p[1];
+        z = p[2];
+      }
+
       x += cx - cameraX;
       y += cy - cameraY;
       z += cz - cameraZ;
@@ -222,6 +254,13 @@
         nZ -= 0x100000000;
       }
 
+      if(transform) {
+        const p = matVecMul(transform, [nX, nY, nZ]);
+        nX = p[0];
+        nY = p[1];
+        nZ = p[2];
+      }
+
       if (rotates && (nZ >= 0)) {
         return;
       }
@@ -235,7 +274,7 @@
       const g = ((colour >> 4) & 0xf) + brightness;
       const b = (colour & 0xf) + brightness;
 
-      drawTriangle(ctx, p1, p2, p3, `rgb(${r << 4}, ${g << 4}, ${b << 4})`);
+      drawBinnedTriangle(cz, p1, p2, p3, `rgb(${r << 4}, ${g << 4}, ${b << 4})`);
     });
   };
 
@@ -364,6 +403,49 @@
       ],
     },
   };
+
+  const newIdentityMatrix = () => [
+    [1, 0, 0], [0, 1, 0], [0, 0, 1],
+  ];
+
+  const newRotXMatrix = (a) => {
+    const s = Math.sin(a), c = Math.cos(a);
+    return [[1, 0, 0], [0, c, -s], [0, s, c]];
+  }
+
+  const newRotYMatrix = (a) => {
+    const s = Math.sin(a), c = Math.cos(a);
+    return [[c, 0, s], [0, 1, 0], [-s, 0, c]];
+  }
+
+  const newRotZMatrix = (a) => {
+    const s = Math.sin(a), c = Math.cos(a);
+    return [[c, -s, 0], [s, c, 0], [0, 0, 1]];
+  }
+
+  const matVecMul = (A, b) => [
+    A[0][0] * b[0] + A[0][1] * b[1] + A[0][2] * b[2],
+    A[1][0] * b[0] + A[1][1] * b[1] + A[1][2] * b[2],
+    A[2][0] * b[0] + A[2][1] * b[1] + A[2][2] * b[2],
+  ];
+
+  const matMatMul = (A, B) => [
+    [
+      A[0][0] * B[0][0] + A[0][1] * B[1][0] + A[0][2] * B[2][0],
+      A[0][0] * B[0][1] + A[0][1] * B[1][1] + A[0][2] * B[2][1],
+      A[0][0] * B[0][2] + A[0][1] * B[1][2] + A[0][2] * B[2][2],
+    ],
+    [
+      A[1][0] * B[0][0] + A[1][1] * B[1][0] + A[1][2] * B[2][0],
+      A[1][0] * B[0][1] + A[1][1] * B[1][1] + A[1][2] * B[2][1],
+      A[1][0] * B[0][2] + A[1][1] * B[1][2] + A[1][2] * B[2][2],
+    ],
+    [
+      A[2][0] * B[0][0] + A[2][1] * B[1][0] + A[2][2] * B[2][0],
+      A[2][0] * B[0][1] + A[2][1] * B[1][1] + A[2][2] * B[2][1],
+      A[2][0] * B[0][2] + A[2][1] * B[1][2] + A[2][2] * B[2][2],
+    ],
+  ];
 
   // Request callback be called on next frame.
   window.requestAnimationFrame(onAnimationFrame);
