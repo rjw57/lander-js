@@ -108,8 +108,8 @@
       getLandscapeAltitude(playerX, playerZ) - UNDERCARRIAGE_Y - 2 * TILE_SIZE;
     previousTimestamp = timestamp;
     playerTransform = matMatMul(
-      newRotYMatrix(timestamp * 2e-3),
-      newRotXMatrix(timestamp * 3e-3),
+      newRotYMatrix(timestamp * 13e-4),
+      newRotXMatrix(timestamp * 7e-4),
     );
 
     // Request callback on next frame.
@@ -119,7 +119,7 @@
   const drawBinnedTriangle = (z, pA, pB, pC, color) => {
     const tileOriginZ = Math.floor(cameraZ / TILE_SIZE) * TILE_SIZE + LANDSCAPE_Z;
     const rowIdx = Math.max(0, Math.min(TILES_Z-1,
-        Math.floor((tileOriginZ - z) / TILE_SIZE)));
+        Math.floor((tileOriginZ - z + TILE_SIZE) / TILE_SIZE)));
     binnedTriangles[rowIdx].push([pA, pB, pC, color]);
   };
 
@@ -154,14 +154,19 @@
       playerTransform,
     );
 
-    /*
     drawObject(
       objectBlueprints.smallLeafyTree,
-      0,
-      LAUNCHPAD_ALTITUDE + LANDSCAPE_Y,
-      LANDSCAPE_Z,
+      cameraX,
+      getLandscapeAltitude(cameraX, cameraZ),
+      cameraZ + LANDSCAPE_Z,
     );
-    */
+
+    drawObject(
+      objectBlueprints.smallLeafyTree,
+      cameraX - 2 * TILE_SIZE,
+      getLandscapeAltitude(cameraX - 2 & TILE_SIZE, cameraZ - 4 * TILE_SIZE),
+      cameraZ - 4 * TILE_SIZE + LANDSCAPE_Z,
+    );
 
     const tileOriginX =
       Math.floor(cameraX / TILE_SIZE) * TILE_SIZE - LANDSCAPE_X;
@@ -219,6 +224,11 @@
     cz,
     transform,
   ) => {
+    // Transform world-space object co-ordinates to camera relative.
+    cx -= cameraX;
+    cy -= cameraY;
+    cz -= cameraZ;
+
     const transformedVertices = vertices.map(([x, y, z]) => {
       if (x > 0x80000000) {
         x -= 0x100000000;
@@ -237,9 +247,9 @@
         z = p[2];
       }
 
-      x += cx - cameraX;
-      y += cy - cameraY;
-      z += cz - cameraZ;
+      x += cx;
+      y += cy;
+      z += cz;
       return projectVertexOntoScreen(x, y, z);
     });
 
@@ -261,7 +271,7 @@
         nZ = p[2];
       }
 
-      if (rotates && (nZ >= 0)) {
+      if (rotates && ((cx*nX) + (cy * nY) + (cz * nZ) >= 0)) {
         return;
       }
 
@@ -274,7 +284,7 @@
       const g = ((colour >> 4) & 0xf) + brightness;
       const b = (colour & 0xf) + brightness;
 
-      drawBinnedTriangle(cz, p1, p2, p3, `rgb(${r << 4}, ${g << 4}, ${b << 4})`);
+      drawBinnedTriangle(cz + cameraZ, p1, p2, p3, `rgb(${r << 4}, ${g << 4}, ${b << 4})`);
     });
   };
 
